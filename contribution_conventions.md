@@ -12,18 +12,20 @@ project-root/
 │   └── paths.py             # Centralized path configuration
 ├── pipeline/                # Data pipeline scripts
 │   ├── 01_download_*.py     # Pure data acquisition (no charts)
-│   └── 02_analyse_*.py      # Analysis scripts → become book notebooks
+│   ├── 02_analyse_*.py      # Analysis scripts → become book notebooks
+│   └── _strip_jupytext_metadata.py  # Shared post-processing helper
 ├── book/                    # MyST Jupyter Book source
-│   ├── notebooks/           # Executed .ipynb files (produced by Snakemake)
+│   ├── notebooks/           # Executed .ipynb files (produced by DVC)
 │   ├── markdown/            # Static hand-written content
 │   └── myst.yml             # Book configuration and table of contents
 ├── data/
-│   ├── downloads/           # Raw downloaded data (git-ignored)
-│   └── processed/           # Processed/transformed data (git-ignored)
+│   ├── downloads/           # Raw downloaded data (git-ignored, DVC-cached)
+│   └── processed/           # Processed/transformed data (git-ignored, DVC-cached)
 ├── output/
 │   ├── images/              # Chart images saved by pipeline scripts
 │   └── reports/             # Report files
-├── Snakefile                # Pipeline definition (equivalent of dvc.yaml)
+├── dvc.yaml                 # Pipeline definition (stages, deps, outs)
+├── dvc.lock                 # Pipeline state (checksums) — tracked in git
 └── pyproject.toml           # Dependencies managed by uv
 ```
 
@@ -32,80 +34,92 @@ project-root/
 | Tool | Purpose |
 |------|---------|
 | **uv** | Package and environment management |
-| **Snakemake** | Pipeline orchestration (dependency-aware task runner) |
+| **DVC** | Pipeline orchestration (dependency-aware task runner) |
 | **jupytext** | Execute `.py` analysis scripts → `.ipynb` notebooks |
 | **MyST / mystmd** | Build the HTML book from notebooks and markdown |
 
-## Snakemake Primer
+## DVC Primer
 
-Snakemake is a Make-inspired workflow manager written in Python.
-It reads the `Snakefile` in the project root.
+[DVC](https://dvc.org/) is a data-version-control and pipeline tool. It reads
+the `dvc.yaml` file in the project root and tracks stage state in `dvc.lock`.
 
-### Core concept: rules
+### Core concept: stages
 
-A rule declares *how* to produce an output from inputs:
+A stage declares *how* to produce outputs from dependencies:
 
-```python
-rule my_stage:
-    input:
-        data = "data/downloads/raw.parquet",
-        script = "pipeline/02_analyse.py",
-    output:
-        notebook = "book/notebooks/02_analyse.ipynb",
-        img      = "output/images/02_chart.png",
-    shell:
-        "MPLBACKEND=Agg uv run jupytext ..."
+```yaml
+stages:
+  my_stage:
+    cmd: MPLBACKEND=Agg uv run jupytext ...
+    deps:
+      - pipeline/02_analyse.py
+      - data/downloads/raw.parquet
+    outs:
+      - book/notebooks/02_analyse.ipynb:
+          cache: false
+      - output/images/02_chart.png:
+          cache: false
 ```
 
-Snakemake compares **file modification timestamps**: if all outputs are newer
-than all inputs, the rule is skipped. This is the key difference from DVC —
-there is no explicit lock file; timestamps drive incremental builds.
+DVC hashes `cmd`, every `deps` entry, and compares against `dvc.lock`: if
+nothing changed, the stage is skipped. This is the key difference from
+Snakemake — there are no file-modification-timestamp comparisons, hashes
+drive incremental builds, and the result is recorded in `dvc.lock` (which
+must be committed to git).
 
-### `ancient()` for downloaded data
+### `cache: false` for git-tracked outputs
 
-Downloaded files should not be re-fetched every run. Wrap their paths in
-`ancient()` so Snakemake treats them as infinitely old and never triggers
-re-download as long as the file exists:
+By default DVC moves stage outputs into its own cache and git-ignores them —
+appropriate for `data/downloads/` and `data/processed/`. But
+`book/notebooks/*.ipynb` and `output/images/*.png` should stay as normal
+files tracked directly by git (see [Git Conventions](#git-conventions)), so
+every such output is declared with `cache: false`. DVC still hashes the file
+to detect staleness; it just doesn't duplicate it into `.dvc/cache`.
 
-```python
-rule download_data:
-    output:
-        ancient("data/downloads/raw.parquet"),
-    shell:
-        "uv run python pipeline/01_download.py"
+### `persist: true` for downloaded data
+
+Downloaded files should not be wiped out and re-fetched every run. Mark
+their output with `persist: true` so DVC leaves the existing file in place
+whenever the stage is (re-)run:
+
+```yaml
+stages:
+  download_data:
+    cmd: uv run python pipeline/01_download.py
+    deps:
+      - pipeline/01_download.py
+    outs:
+      - data/downloads/raw.parquet:
+          persist: true
 ```
 
-To force a fresh download: delete the file and re-run `snakemake`.
+To force a fresh download: delete the file (or run `dvc repro -f
+download_data`).
 
 ### Running the pipeline
 
 ```bash
-snakemake -n          # dry-run: show what would execute
-snakemake -j4         # run with up to 4 parallel jobs
-snakemake <file>      # build one specific output
-snakemake -R <rule>   # force-re-run a specific rule
-snakemake --forceall  # re-run everything unconditionally
+dvc repro --dry        # dry-run: show what would execute
+dvc repro               # run the full pipeline (skips up-to-date stages)
+dvc repro <stage>       # build one specific stage (and its dependencies)
+dvc repro -f <stage>    # force-re-run a specific stage
+dvc repro --force       # re-run everything unconditionally
+dvc dag                 # print the pipeline DAG
 ```
 
 Or via Make shortcuts:
 
 ```bash
-make run       # snakemake -j4
-make dry-run   # snakemake -n
+make run       # dvc repro
+make dry-run   # dvc repro --dry
 make serve     # myst start (local book preview)
 ```
 
-### The `rule all` convention
+### The `dvc.yaml` convention
 
-The top of the Snakefile defines a pseudo-rule whose inputs are the final
-targets. Running bare `snakemake` builds these:
-
-```python
-rule all:
-    input:
-        "book/notebooks/02_analyse_example.ipynb",
-        "book/notebooks/03_another_analysis.ipynb",
-```
+`dvc.yaml` lists every stage; DVC infers the full DAG from each stage's
+`deps`/`outs`, so there is no separate "build everything" target to
+maintain — running bare `dvc repro` builds every stage that is out of date.
 
 ## Pipeline Conventions
 
@@ -114,14 +128,14 @@ rule all:
 **1. Pure data scripts** (`01_*`, `00_*`, …)
 - No charts or visualizations.
 - Read/write data files only.
-- Registered in Snakemake with `ancient()` outputs to avoid re-downloading.
+- Registered in `dvc.yaml` with `persist: true` outputs to avoid re-downloading.
 - Not converted to notebooks.
 
 **2. Analysis scripts** (`02_*`, `03_*`, …)
 - Use jupytext `# %%` cell markers and a jupytext/kernelspec header.
 - Save all figures to `output/images/` via `fig.savefig()`.
 - Use MyST `{figure}` directives in `# %% [markdown]` cells.
-- Snakemake runs them via jupytext → produces an executed `.ipynb` in `book/notebooks/`.
+- DVC runs them via jupytext → produces an executed `.ipynb` in `book/notebooks/`.
 
 ### Jupytext header for analysis scripts
 
@@ -158,34 +172,32 @@ generated `.ipynb` lives.
 
 Naming convention: `<script_number>_<descriptive_name>.png`.
 
-### Snakemake rule for analysis scripts
+### DVC stage for analysis scripts
 
-```python
-rule process_my_analysis:
-    input:
-        script = "pipeline/03_my_analysis.py",
-        data   = "data/downloads/raw.parquet",
-    output:
-        notebook = "book/notebooks/03_my_analysis.ipynb",
-        img      = "output/images/03_my_chart.png",
-    shell:
-        """
-        MPLBACKEND=Agg uv run jupytext --to notebook --execute \
-            --set-kernel python3 \
-            --output {output.notebook} {input.script} && \
-        uv run python -c "
-import nbformat
-nb = nbformat.read('{output.notebook}', as_version=4)
-nb.cells = [c for c in nb.cells
-            if not (c.cell_type == 'raw' and 'jupytext' in c.source)]
-nbformat.write(nb, '{output.notebook}')
-"
-        """
+```yaml
+stages:
+  process_my_analysis:
+    cmd: >-
+      MPLBACKEND=Agg uv run jupytext --to notebook --execute
+      --set-kernel python3
+      --output book/notebooks/03_my_analysis.ipynb
+      pipeline/03_my_analysis.py &&
+      uv run python pipeline/_strip_jupytext_metadata.py
+      book/notebooks/03_my_analysis.ipynb
+    deps:
+      - pipeline/03_my_analysis.py
+      - data/downloads/raw.parquet
+    outs:
+      - book/notebooks/03_my_analysis.ipynb:
+          cache: false
+      - output/images/03_my_chart.png:
+          cache: false
 ```
 
-The post-processing step strips a raw jupytext metadata cell that MyST does
-not recognize. The `MPLBACKEND=Agg` environment variable makes `plt.show()`
-a no-op in headless mode.
+`pipeline/_strip_jupytext_metadata.py` strips the raw jupytext metadata cell
+that MyST does not recognize; every analysis stage's `cmd` calls it as a
+second step. The `MPLBACKEND=Agg` environment variable makes `plt.show()` a
+no-op in headless mode.
 
 ## Path Conventions
 
@@ -221,9 +233,10 @@ Key paths:
        """One-line description."""
        return self.downloads_path / "my_data.parquet"
    ```
-3. **Add a rule** to `Snakefile` with `input`, `output`, and `shell`.
-4. **Add the notebook** to `ANALYSIS_NOTEBOOKS` in `Snakefile` (if analysis).
-5. **Add the notebook** to the `toc` in `book/myst.yml`.
+3. **Add a stage** to `dvc.yaml` with `cmd`, `deps`, and `outs` (use
+   `cache: false` for anything under `book/notebooks/` or `output/images/`,
+   and `persist: true` for downloaded data).
+4. **Add the notebook** to the `toc` in `book/myst.yml`.
 
 ## Git Conventions
 
@@ -233,17 +246,21 @@ Key paths:
 | `book/notebooks/*.ipynb` generated notebooks | `data/processed/*` |
 | `output/images/*.png` generated charts | `.venv/` |
 | `book/markdown/*.md` static content | |
+| `dvc.yaml`, `dvc.lock` | |
 
 The `.ipynb` notebooks and images are tracked so the book can be rebuilt
-from git without re-running the pipeline (CI only runs `myst build`).
+from git without re-running the pipeline (CI only runs `myst build`). This
+is why they are declared with `cache: false` in `dvc.yaml` — DVC still
+hashes them to detect staleness, but the files themselves live in git, not
+in `.dvc/cache`.
 
 ## Workflow Summary
 
 ```
 1. Write pipeline script in pipeline/
-2. Add Snakemake rule in Snakefile
-3. make run          ← execute pipeline
+2. Add DVC stage in dvc.yaml
+3. make run          ← execute pipeline (dvc repro)
 4. make serve        ← preview book locally
-5. git add / commit  ← commit notebooks + images
+5. git add / commit  ← commit notebooks + images + dvc.lock
 6. git push          ← CI deploys to GitHub Pages
 ```

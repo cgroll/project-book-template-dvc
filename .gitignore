@@ -14,7 +14,7 @@ build/
 .Python
 env/
 
-# Data (managed by Snakemake, not git)
+# Data (managed by DVC, not git)
 data/downloads/*
 data/processed/*
 !data/downloads/.gitkeep
