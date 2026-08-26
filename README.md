@@ -77,18 +77,19 @@ project-root/
 │   ├── 01_download_*    # Data acquisition
 │   └── 02_analyse_*     # Analysis → notebook
 ├── book/                # MyST book source
-│   ├── notebooks/       # Executed notebooks (Snakemake output)
+│   ├── notebooks/       # Executed notebooks (DVC output)
 │   ├── markdown/        # Static content
 │   └── myst.yml         # TOC and site settings
 ├── data/                # Git-ignored data (cached by DVC)
 ├── output/images/       # Figures (tracked in git)
 ├── dvc.yaml             # Pipeline DAG
 ├── dvc.lock             # Pipeline state (checksums) — tracked in git
-└── contribution_conventions.md   # Detailed conventions for contributors/AI
+├── AGENTS.md            # Detailed conventions for contributors/AI
+└── PROJECT.md           # Current state, roadmap, lessons learned
 ```
 
-See [contribution_conventions.md](contribution_conventions.md) for full details on
-adding pipeline stages, writing analysis scripts, and DVC usage.
+See [AGENTS.md](AGENTS.md) for full details on adding pipeline stages,
+writing analysis scripts, and DVC usage.
 
 ## Common DVC commands
 

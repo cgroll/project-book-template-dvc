@@ -1,7 +1,15 @@
-# Contribution Conventions
+# Agent & Contribution Conventions
 
 This document describes the project structure and conventions.
 It is written for human contributors and AI agents alike.
+
+## Project Tracking
+
+Current state, roadmap, and lessons learned are tracked in
+[PROJECT.md](PROJECT.md). Update it at the end of a work session: current
+state, what changed, what was learned, and the next step. The `wrap-up`
+skill (`.claude/skills/wrap-up/`) automates checking whether it needs
+updating.
 
 ## Project Structure
 
