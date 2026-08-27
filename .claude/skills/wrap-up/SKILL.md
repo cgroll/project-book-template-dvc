@@ -31,8 +31,8 @@ splitting into separate commits and propose groupings.
 ## 3. Code quality
 
 This project uses `pre-commit` (check-toml, check-yaml, end-of-file-fixer,
-trailing-whitespace, check-added-large-files, black, nbstripout) — there is
-no ruff or pyright configured. Run:
+trailing-whitespace, check-added-large-files) — there is no ruff or pyright
+configured. Run:
 
 ```bash
 uv run pre-commit run --all-files
