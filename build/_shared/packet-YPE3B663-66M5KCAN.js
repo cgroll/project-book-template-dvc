@@ -1,0 +1,1 @@
+import{a as e,b as r}from"/project-book-template-dvc/build/_shared/chunk-IMEQYZY3.js";import"/project-book-template-dvc/build/_shared/chunk-GEZIJWLJ.js";import"/project-book-template-dvc/build/_shared/chunk-RAQ24GF6.js";export{e as PacketModule,r as createPacketServices};
